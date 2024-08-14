@@ -1,0 +1,199 @@
+---
+title: "NH_CI_online_clean"
+author: "Alberte Seeberg"
+date: "2024-07-16"
+output: html_document
+---
+
+```{r}
+
+#Loading packages & setting directories
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(lme4)
+library(car)
+library(emmeans)
+library(afex)
+library(gridExtra)
+library(cowplot)
+library(dplyr)
+library(sjPlot)
+
+setwd('/Users/au555044/Desktop/CI_Groove_Project/Online/Online_CI')
+
+```
+
+
+########                               ~*~*~*~*~*~*~*~*~*~*                             ##########
+#                                         Preprocessing!                                         #
+##############                         *~*~*~*~*~*~*~*~*~*~                           ###########
+```{r}
+
+df_nh = read.csv2('Data_NH_new/NH_on.csv')
+df_ci = read.csv2('Data_CI/CI_on.csv')
+df_nh = df_nh[-1]
+df_ci = df_ci[-1]
+df_nh$Group = "NH"
+df_ci$Group = "CI"
+df_nh$sound = as.character(df_nh$sound)
+
+df = bind_rows(df_nh, df_ci)
+
+df$dizziness=factor(df$dizziness, levels = c("Never", "Very Rarely", "Rarely", "Occasionally", "Very Frequently", "Always"))
+df$complexity=factor(df$complexity, levels = c("Low", "Medium", "High"))
+df$Version[df$Version == 'full'] = 'SN+BD+HH'
+df$Version = factor(df$Version, levels = c("SN+BD+HH", "SN+BD", "SN+HH", "SN"))
+df$rhythmType = factor(df$rhythmType, levels = c("full", "SN+BD", "SN+HH", "SN"))
+
+df$ratingType[df$ratingType == 'move'] = 'Wanting to Move'
+df$ratingType[df$ratingType == 'pleasure'] = 'Experienced Pleasure'
+df$Group = as.factor(df$Group)
+df$yrsTraining = factor(df$yrsTraining, levels = c('0', '0.5','1','2','3-5','6-9','10 or more'))
+
+#Adding a column with wSI for full version for all versions of each rhythm to test per rhythm
+wSI_f = subset(df, Version %in% "SN+BD+HH")
+wSI_f = wSI_f %>% 
+distinct(stimNumber, wSI)
+
+wSI_f = wSI_f %>% 
+  rename(
+    wSI_full = wSI,
+    )
+
+df = left_join(df, wSI_f, by = "stimNumber")
+
+```
+
+
+########                               ~*~*~*~*~*~*~*~*~*~*                             ##########
+#                                            plots!                                             #
+##############                         *~*~*~*~*~*~*~*~*~*~                           ###########
+
+```{r}
+#MAKING PLOT OF MUSIC EXPERIENCE
+music_exp = subset(df, select = c(ID, yrsTraining, Group))
+
+music_exp = (music_exp[!duplicated(music_exp), ])
+
+# Custom colors for the bars
+custom_colors <- c("NH" = "steelblue", "CI" = "darkgoldenrod1")
+
+ggplot(music_exp, aes(x = yrsTraining, fill = Group)) + 
+  geom_bar(position = "dodge", color = "black", linewidth = 0.2)+
+  scale_color_brewer(palette="Dark2")+
+  scale_fill_manual(values = custom_colors)+
+  labs(
+    x = "Years of Training",       # Label for the x-axis
+    y = "Count",                   # Label for the y-axis
+    fill = "Group"            # Label for the legend
+  )+
+  scale_y_continuous(breaks = seq(0, 10, by = 2), limits = c(0, 10))+
+  theme_minimal(base_size = 13)
+
+
+#Plot across groups (n = 60)
+ggplot(df, aes(x = wSI_full, y= rating, colour = Version))+
+  ylim(0,100)+
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE)+
+  ylab("Rating")+xlab("Degree of syncopation") + theme_minimal(base_size = 15) + scale_color_brewer(palette="Dark2")
+
+custom_colors <- c("NH" = "steelblue", "CI" = "darkgoldenrod1")
+test = df
+test$Version = factor(test$Version, levels = c("SN", "SN+HH", "SN+BD", "SN+BD+HH"))
+
+#Plot with both groups split by version
+ggplot(test, aes(x = wSI_full, y= rating, group = Group, colour = Group))+
+  facet_wrap(~Version)+
+  ylim(0,100)+
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE)+
+  scale_colour_manual(values = custom_colors)+
+  ylab("Rating")+xlab("Degree of syncopation") + theme_minimal(base_size = 15)
+
+
+```
+
+
+########                               ~*~*~*~*~*~*~*~*~*~*                             ##########
+#                                            analysis                                            #
+##############                         *~*~*~*~*~*~*~*~*~*~                           ###########
+
+```{r}
+
+m0 <- lmer(rating ~ 1 + (poly(wSI_full,2)|ID), data = df,
+           REML = FALSE, control = lmerControl(optimizer = "nlminbwrap", calc.derivs = FALSE))
+
+m1 = update(m0,.~.+Group) 
+m2 = update(m1,.~.+Version) 
+m3 = update(m2,.~.+poly(wSI_full,2))
+m4 = update(m3,.~.+Group:Version)
+m5 = update(m4,.~.+poly(wSI_full,2):Group)
+m6 = update(m5,.~.+poly(wSI_full,2):Version)
+m7 = update(m6,.~.+poly(wSI_full,2)*Version*Group)
+
+anova(m0, m1, m2, m3, m4,m5,m6,m7)
+
+
+summary(m7)
+
+#Save model output as table
+tab_model(m7, show.stat = TRUE, show.df = TRUE, show.se = TRUE, show.ci = FALSE, string.pred = "Independent variables", string.stat = "t-val", col.order = c("est", "se", "stat", "df", "p"), file = "m7_group_table.doc")
+```
+
+
+```{r}
+#Post hoc contrasts at points
+emR <- emmeans(m7,  ~ Version|poly(wSI_full,2)|Group, 'wSI_full', at = list(wSI_full = c(0,20,40,60,80)), pbkrtest.limit = 7392)
+
+# goes in consecutive order - not including all contrasts
+emR %>% 
+    contrast('consec', reverse = TRUE) %>% 
+    confint(by = NULL, adjust = "holm") 
+
+#holm p val
+emR %>% 
+    contrast('consec', reverse = TRUE, adjust = "holm")
+
+```
+
+```{r}
+#Testing with SN+HH reference in version
+
+df$Version = factor(df$Version, levels = c("SN+HH", "SN", "SN+BD", "SN+BD+HH"))
+
+m0 <- lmer(rating ~ 1 + (poly(wSI_full,2)|ID), data = df,
+           REML = FALSE, control = lmerControl(optimizer = "nlminbwrap", calc.derivs = FALSE))
+
+m1 = update(m0,.~.+Group) 
+m2 = update(m1,.~.+Version) 
+m3 = update(m2,.~.+poly(wSI_full,2))
+m4 = update(m3,.~.+Group:Version)
+m5 = update(m4,.~.+poly(wSI_full,2):Group)
+m6 = update(m5,.~.+poly(wSI_full,2):Version)
+m7 = update(m6,.~.+poly(wSI_full,2)*Version*Group)
+
+anova(m0, m1, m2, m3, m4,m5,m6,m7)
+
+summary(m7)
+
+tab_model(m7, show.stat = TRUE, show.df = TRUE, show.se = TRUE, show.ci = FALSE, string.pred = "Independent variables", string.stat = "t-val", col.order = c("est", "se", "stat", "df", "p"), file = "m7_group_table_SNHH.doc")
+
+```
+
+### Diagnostic plots of final model
+```{r message = FALSE}
+#Diagnostic plots
+qqPlot(resid(m7)) 
+hist(resid(m7)) 
+
+#Homoscedasticity and linearity
+
+# Fitted vs. residual plot (linearity)
+plot(m7, type = c('p', 'smooth'))
+
+# Scale-location plot (homoscedasticity)
+plot(m7, sqrt(abs(resid(.))) ~ fitted(.), type = c("p", "smooth"))
+
+# Observed versus fitted values by Version
+plot(m7, rating ~ fitted(.) | Version, abline = c(0,1))
+```

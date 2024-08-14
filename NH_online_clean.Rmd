@@ -1,0 +1,239 @@
+---
+---
+title: "Analysis_NH_online"
+author: "Alberte Seeberg"
+date: "2023-06-12"
+output: html_document
+---
+
+
+
+```{r}
+
+#Loading packages & setting directories
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(lme4)
+library(car)
+library(emmeans)
+library(afex)
+library(gridExtra)
+library(cowplot)
+library(dplyr)
+library(sjPlot)
+
+setwd('/Users/au555044/Desktop/CI_Groove_Project/Online/Online_CI/Data_NH_new')
+
+```
+
+
+########                               ~*~*~*~*~*~*~*~*~*~*                             ##########
+#                                         Preprocessing!                                         #
+##############                         *~*~*~*~*~*~*~*~*~*~                           ###########
+```{r}
+
+data = read.csv2('NH_on.csv')
+data = data[-1]
+
+data %>% 
+distinct(ID, age, sex, yrsTraining, dizziness)
+
+data$yrsTraining = as.factor(data$yrsTraining)
+data$hSI = as.integer(data$hSI)
+data$entropy = as.integer(data$entropy)
+data$movingEntropy = as.integer(data$movingEntropy)
+
+df = data
+
+
+df$sex[df$sex == 'm'] = 'M'
+
+demo_nh = df %>% 
+distinct(ID, age, sex, yrsTraining, dizziness, origin, country_cur, sound)
+
+demo_nh$origin[demo_nh$origin %in% c('U.S.A.', 'United States','United States ', 'United States Of America', 'US', 'usa')] <- 'USA'
+demo_nh$origin[demo_nh$origin %in% 'United Kingdom'] <- 'UK'
+demo_nh$origin[demo_nh$origin %in% c('Denmark ','denmark','DK')] <- 'Denmark'
+demo_nh$origin[demo_nh$origin %in% 'Portugal '] <- 'Portugal'
+
+demo_nh$ID = as.factor(demo_nh$ID)
+demo_nh$sex = as.factor(demo_nh$sex)
+demo_nh$origin = as.factor(demo_nh$origin)
+demo_nh$country_cur = as.factor(demo_nh$country_cur)
+
+df$dizziness=factor(df$dizziness, levels = c("Never", "Very Rarely", "Rarely", "Occasionally", "Very Frequently", "Always"))
+df$complexity=factor(df$complexity, levels = c("Low", "Medium", "High"))
+df$Version[df$Version == 'full'] = 'SN+BD+HH'
+df$Version = factor(df$Version, levels = c("SN+BD+HH", "SN+BD", "SN+HH", "SN"))
+df$rhythmType = factor(df$rhythmType, levels = c("full", "SN+BD", "SN+HH", "SN"))
+
+df$ratingType[df$ratingType == 'move'] = 'Wanting to Move'
+df$ratingType[df$ratingType == 'pleasure'] = 'Experienced Pleasure'
+
+#Adding a column with wSI for full version for all versions of each rhythm to test per rhythm
+wSI_f = subset(df, Version %in% "SN+BD+HH")
+wSI_f = wSI_f %>% 
+distinct(stimNumber, wSI)
+
+wSI_f = wSI_f %>% 
+  rename(
+    wSI_full = wSI,
+    )
+
+df = left_join(df, wSI_f, by = "stimNumber")
+
+df_wide=read.csv2("NH_on_wide.csv")
+df_wide$dizziness = as.factor(df_wide$dizziness)
+df_wide$practice = as.factor(df_wide$practice)
+df_wide$yrsStop = as.factor(df_wide$yrsStop)
+df_wide$yrsTraining = as.factor(df_wide$yrsTraining)
+df_wide$timeListen = as.factor(df_wide$timeListen)
+df_wide$ID = as.factor(df_wide$ID)
+
+
+```
+
+
+########                               ~*~*~*~*~*~*~*~*~*~*                             ##########
+#                                            plots!                                             #
+##############                         *~*~*~*~*~*~*~*~*~*~                           ###########
+
+```{r}
+
+#CREATE PLOT FOR ORIGIN
+
+# Count the occurrences of each level in origin
+counts <- demo_nh %>%
+  count(origin)
+
+# Filter levels with a count of 1
+single_count_levels <- counts$origin[counts$n == 1]
+
+# Create a new variable, grouping all levels with a count of 1 into "Other"
+demo_nh <- demo_nh %>%
+  mutate(origin = fct_collapse(origin, Other = as.character(single_count_levels)))
+
+# Reorder by count in ascending order
+demo_nh$origin <- fct_infreq(demo_nh$origin)
+
+# Move "Other" to the last position
+demo_nh$origin <- fct_relevel(demo_nh$origin, "Other", after = Inf)
+
+# Create the plot
+nat_nh=ggplot(demo_nh, aes(x = origin)) + 
+  geom_bar(position = "dodge", fill = "steelblue", color = "black", linewidth = 0.2) +
+  labs(
+    x = NULL,             # Label for the x-axis
+    y = NULL                    # Label for the y-axis
+  ) +
+  theme_minimal(base_size = 18)
+
+
+# CHECK CORRELATION BTW MOVE AND PLEASURE
+
+#Account for repeated measures
+corval = rmcorr(ID, move, pleasure, df_wide)
+plot(corval)
+corval
+
+# Collapse data to just have one rating to plot
+
+df_c = aggregate(df$rating,by=list(df$ID, df$Version, df$wSI, df$wSI_full), mean)
+
+df_c = plyr::rename(df_c, c("Group.1"="ID"))
+df_c = plyr::rename(df_c, c("Group.2"="Version"))
+df_c = plyr::rename(df_c, c("Group.3"="wSI"))
+df_c = plyr::rename(df_c, c("Group.4"="wSI_full"))
+df_c = plyr::rename(df_c, c("x"="rating"))
+
+
+p_nh =ggplot(df_c, aes(x = wSI_full, y= rating, group = Version, colour = Version))+
+  #geom_point(aes(colour = rhythmType))+
+  ylim(0,100)+
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE)+
+  geom_rug(sides="b", colour= "black")+
+  ggtitle('NH Controls')+
+  ylab("Rating")+xlab("Degree of syncopation") + theme_minimal(base_size = 15) + scale_color_brewer(palette="Dark2")+theme(axis.title.x=element_blank(), axis.title.y=element_blank(), legend.position="none",plot.title = element_text(hjust = 0.5))
+
+```
+
+########                               ~*~*~*~*~*~*~*~*~*~*                             ##########
+#                                            analysis                                            #
+##############                         *~*~*~*~*~*~*~*~*~*~                           ###########
+
+### Mixed effects models
+```{r }
+options(digits =3)
+m0 <- lmer(rating ~ 1 + (poly(wSI_full,2)|ID), data = df,
+           REML = FALSE, control = lmerControl(optimizer = "nlminbwrap", calc.derivs = FALSE))
+
+m1 = update(m0,.~.+poly(wSI_full,2)) 
+m2 = update(m1,.~.+Version) 
+m3 = update(m2,.~.+poly(wSI_full,2):Version)
+
+anova(m0, m1, m2, m3)
+
+summary(m3)
+
+#save output as table 
+tab_model(m3, show.stat = TRUE, show.df = TRUE, show.se = TRUE, show.ci = FALSE, string.pred = "Independent variables", string.stat = "t-val", col.order = c("est", "se", "stat", "df", "p"), file = "m3_NH_table_fullref.doc")
+```
+
+```{r}
+#Testing with SN+HH reference in version
+
+df$Version = factor(df$Version, levels = c("SN+HH", "SN", "SN+BD", "SN+BD+HH"))
+
+m0 <- lmer(rating ~ 1 + (poly(wSI_full,2)|ID), data = df,
+           REML = FALSE, control = lmerControl(optimizer = "nlminbwrap", calc.derivs = FALSE))
+
+m1 = update(m0,.~.+poly(wSI_full,2)) 
+m2 = update(m1,.~.+Version) 
+m3 = update(m2,.~.+poly(wSI_full,2):Version)
+
+anova(m0, m1, m2, m3)
+
+summary(m3)
+
+tab_model(m3, show.stat = TRUE, show.df = TRUE, show.se = TRUE, show.ci = FALSE, string.pred = "Independent variables", string.stat = "t-val", col.order = c("est", "se", "stat", "df", "p"), file = "m3_NH_table_SNHHref.doc")
+```
+
+
+### Anova, post hocs
+```{r message = FALSE}
+options(digits =3)
+#type III ANOVA
+anova(m3)
+
+#Post hoc contrasts at syncopation index 0, 20, 40, 60, 80
+emR <- emmeans(m3,  ~ Version|poly(wSI_full,2), 'wSI_full', at = list(wSI_full = c(0,20,40,60,80)), pbkrtest.limit = 5280)
+
+# goes in consecutive order - not including all contrasts
+emR %>% 
+    contrast('consec', reverse = TRUE) %>% 
+    confint(by = NULL, adjust = "holm") 
+
+#holm p val
+emR %>% 
+    contrast('consec', reverse = TRUE, adjust = "holm")
+
+```
+
+### Diagnostic plots of final model
+```{r message = FALSE}
+#Diagnostic plots
+qqPlot(resid(m3)) 
+hist(resid(m3)) 
+
+#Homoscedasticity and linearity
+
+# Fitted vs. residual plot (linearity)
+plot(m3, type = c('p', 'smooth'))
+
+# Scale-location plot (homoscedasticity)
+plot(m3, sqrt(abs(resid(.))) ~ fitted(.), type = c("p", "smooth"))
+
+# Observed versus fitted values by Version
+plot(m3, rating ~ fitted(.) | Version, abline = c(0,1))
+```

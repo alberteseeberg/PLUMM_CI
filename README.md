@@ -1,6 +1,6 @@
 ## The pleasurable urge to move to music in cochlear implant users
 
-Here you can find the scripts used for the online experiment as well as the statistical analyses in the paper. The paper can be found [here](www.google.dk).
+Here you can find the scripts used for the online experiment as well as the statistical analyses in the paper. The paper can be found [here](https://ssrn.com/abstract=4931906).
 
 *index.html* contains the code to host the experiment on an online server and loading the plugins from jsPsych. 
 
